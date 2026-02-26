@@ -1,4 +1,4 @@
-import { put, list } from '@vercel/blob';
+import { put, list, download } from '@vercel/blob';
 import { createHash } from 'crypto';
 
 export interface UrlData {
@@ -14,7 +14,7 @@ async function readJson<T>(pathname: string): Promise<T | null> {
   const { blobs } = await list({ prefix: pathname, limit: 1 });
   const match = blobs.find(b => b.pathname === pathname);
   if (!match) return null;
-  const res = await fetch(match.url, { cache: 'no-store' });
+  const res = await download(match.url);  
   if (!res.ok) return null;
   return res.json() as Promise<T>;
 }
@@ -70,7 +70,7 @@ export async function getRecent(limit = 20): Promise<UrlData[]> {
   const { blobs } = await list({ prefix: 'urls/' });
   const items = await Promise.all(
     blobs.map(b =>
-      fetch(b.url, { cache: 'no-store' }).then(r => r.json() as Promise<UrlData>)
+      download(b.url).then(r => r.json() as Promise<UrlData>)
     )
   );
   return items
