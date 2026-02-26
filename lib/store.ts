@@ -1,4 +1,4 @@
-import { put, list } from '@vercel/blob';
+import { list } from '@vercel/blob';
 import { createHash } from 'crypto';
 
 export interface UrlData {
@@ -10,21 +10,45 @@ export interface UrlData {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/** PUT a blob directly, bypassing the SDK's public-only restriction. */
+async function blobPut(pathname: string, body: string, contentType: string): Promise<void> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  const params = new URLSearchParams({ pathname });
+  const res = await fetch(`https://blob.vercel-storage.com/?${params}`, {
+    method: 'PUT',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'x-api-version': '9',
+      'x-content-type': contentType,
+      'x-add-random-suffix': '0',
+    },
+    body,
+  });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(`Vercel Blob put failed: ${error}`);
+  }
+}
+
+/** GET a blob using bearer-token auth (required for private stores). */
+async function blobGet(url: string): Promise<Response> {
+  return fetch(url, {
+    headers: { authorization: `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}` },
+    cache: 'no-store',
+  });
+}
+
 async function readJson<T>(pathname: string): Promise<T | null> {
   const { blobs } = await list({ prefix: pathname, limit: 1 });
   const match = blobs.find(b => b.pathname === pathname);
   if (!match) return null;
-  const res = await fetch(match.url, { cache: 'no-store' });
+  const res = await blobGet(match.url);
   if (!res.ok) return null;
   return res.json() as Promise<T>;
 }
 
 async function writeJson(pathname: string, data: unknown): Promise<void> {
-  await put(pathname, JSON.stringify(data), {
-    access: 'public',
-    addRandomSuffix: false,
-    contentType: 'application/json',
-  });
+  await blobPut(pathname, JSON.stringify(data), 'application/json');
 }
 
 function urlHash(original: string): string {
@@ -69,9 +93,7 @@ export async function incrementHits(code: string): Promise<void> {
 export async function getRecent(limit = 20): Promise<UrlData[]> {
   const { blobs } = await list({ prefix: 'urls/' });
   const items = await Promise.all(
-    blobs.map(b =>
-      fetch(b.url, { cache: 'no-store' }).then(r => r.json() as Promise<UrlData>)
-    )
+    blobs.map(b => blobGet(b.url).then(r => r.json() as Promise<UrlData>))
   );
   return items
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
